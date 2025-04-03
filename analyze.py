@@ -1,45 +1,46 @@
 # 导入需要的库
 import numpy as np
 import pandas as pd
-# 导入 statsmodels 用于执行回归分析来估计路径 a 和 b
-# 如果没有安装，需要先安装: pip install statsmodels
-import statsmodels.formula.api as smf
-import statsmodels.api as sm # <--- 添加这一行
+import statsmodels.api as sm # 用于执行回归分析
 
-# --- Bootstrap 核心函数 (与之前相同) ---
+# --- Bootstrap 核心函数 ---
 
 def bootstrap_statistic(data, statistic_func, n_bootstrap_samples=1000):
   """
-  执行 Bootstrap 方法来估计某个统计量的分布。
-  (函数内容与之前版本相同，注释省略以保持简洁，请参考上一个回复)
+  执行 Bootstrap 重采样，并为每个样本计算指定的统计量。
+
+  参数:
+    data: 包含原始数据的 pandas DataFrame。
+    statistic_func: 用于计算目标统计量的函数。
+    n_bootstrap_samples: Bootstrap 重采样次数 (B)。
+
+  返回:
+    一个 numpy 数组，包含所有有效计算出的统计量。
   """
-  n_size = data.shape[0] if isinstance(data, (pd.DataFrame, pd.Series)) else len(data)
+  n_size = data.shape[0]
   bootstrap_stats = []
-  print(f"正在生成 {n_bootstrap_samples} 个自助样本并计算中介效应...")
+  print(f"正在生成 {n_bootstrap_samples} 个自助样本并计算统计量...")
   for i in range(n_bootstrap_samples):
+    # 1. 有放回地抽取样本索引
     indices = np.random.choice(np.arange(n_size), size=n_size, replace=True)
-    if isinstance(data, (pd.DataFrame, pd.Series)):
-        bootstrap_sample = data.iloc[indices]
-    else:
-        np_data = np.array(data)
-        bootstrap_sample = np_data[indices]
+    bootstrap_sample = data.iloc[indices]
+
+    # 2. 计算该样本的统计量
     try:
       stat = statistic_func(bootstrap_sample)
-      # 检查 stat 是否为 None 或 NaN，如果是则跳过
       if stat is not None and not np.isnan(stat):
           bootstrap_stats.append(stat)
-      # else:
-      #     print(f"注意：在第 {i+1} 个自助样本上计算得到无效效应值，已跳过。")
     except Exception as e:
-      # 如果计算中介效应时出错，打印警告并跳过该样本
-      # print(f"警告：在第 {i+1} 个自助样本上计算中介效应时出错: {e}")
-      pass # 静默处理错误，或者取消注释上面的print来查看
+      # 如果计算出错则跳过该样本 (可以选择取消注释下面的打印来看错误)
+      # print(f"警告：在第 {i+1} 个自助样本上计算时出错: {e}")
+      pass
 
+    # 打印进度
     if (i + 1) % (n_bootstrap_samples // 10) == 0:
         print(f"已完成 {i + 1}/{n_bootstrap_samples}...")
 
   print("Bootstrap 重采样完成。")
-  valid_stats = np.array(bootstrap_stats) # bootstrap_stats 现在只包含有效值
+  valid_stats = np.array(bootstrap_stats)
   if len(valid_stats) < n_bootstrap_samples:
       print(f"警告：最终使用了 {len(valid_stats)} 个有效的自助样本结果（总尝试次数：{n_bootstrap_samples}）。")
   return valid_stats
@@ -47,164 +48,136 @@ def bootstrap_statistic(data, statistic_func, n_bootstrap_samples=1000):
 
 def calculate_confidence_interval(bootstrap_stats, confidence_level=0.95):
   """
-  根据自助法得到的统计量分布计算置信区间（使用百分位法）。
-  (函数内容与之前版本相同，注释省略，请参考上一个回复)
+  根据 Bootstrap 统计量分布计算置信区间（百分位法）。
+
+  参数:
+    bootstrap_stats: bootstrap_statistic 函数返回的统计量数组。
+    confidence_level: 置信水平 (如 0.95 代表 95%)。
+
+  返回:
+    置信区间的下限和上限 (元组)。
   """
   if len(bootstrap_stats) == 0:
-      print("错误：没有有效的自助统计量可用于计算置信区间。")
+      print("错误：没有有效的自助统计量用于计算置信区间。")
       return (np.nan, np.nan)
+  # 计算分位点
   alpha = 1 - confidence_level
   lower_percentile = alpha / 2.0 * 100
   upper_percentile = (1 - alpha / 2.0) * 100
+  # 获取置信区间边界
   lower_bound = np.percentile(bootstrap_stats, lower_percentile)
   upper_bound = np.percentile(bootstrap_stats, upper_percentile)
   return lower_bound, upper_bound
 
-# --- 如何使用 ---
 
-# 1. ***** 加载你的真实数据 *****
-#    你需要将包含 '体育活动', '健康', '客观环境' 这三列的
-#    真实数据文件（比如 .csv 或 .xlsx）加载进来。
-#    请替换掉下面的示例数据加载代码。
-#    确保你的列名与代码中使用的完全一致！
-try:
-    # 【【【 在这里替换 'your_real_data.csv' 为你朋友的实际文件名 】】】
-    all_data = pd.read_excel('data.xlsx')
-    # 如果是 Excel 文件, 用: pd.read_excel('your_real_data.xlsx')
-
-    # 检查必需的列是否存在
-    required_cols = ['健康', '体育活动', '客观环境']
-    if not all(col in all_data.columns for col in required_cols):
-        print(f"错误：数据文件中缺少必需的列。需要包含: {required_cols}")
-        # 如果列缺失，可以用下面的示例数据代替来测试代码结构
-        raise FileNotFoundError # 触发下面的 except 块
-
-except FileNotFoundError:
-    print("错误：找不到指定的数据文件，或文件中列不全。将使用随机生成的示例数据进行演示。")
-    print("请务必修改代码以加载您的真实数据文件！")
-    # 生成示例数据用于演示
-    all_data = pd.DataFrame({
-        '健康': np.random.randn(100),      # 自变量 X
-        '体育活动': np.random.randn(100),  # 中介变量 M
-        '客观环境': np.random.randn(100)   # 因变量 Y
-    })
-    # 模拟一个中介效应路径
-    all_data['体育活动'] = 0.4 * all_data['健康'] + np.random.randn(100) * 0.8
-    all_data['客观环境'] = 0.1 * all_data['健康'] + 0.5 * all_data['体育活动'] + np.random.randn(100) * 0.7
-
-print("数据加载完成。数据（或示例数据）前5行：")
-print(all_data.head())
-
-print("\n--- 数据检查 ---")
-required_cols = ['健康', '体育活动', '客观环境']
-for col in required_cols:
-    if col in all_data.columns:
-        unique_count = all_data[col].nunique()
-        variance = all_data[col].var()
-        print(f"列 '{col}':")
-        print(f"  唯一值数量: {unique_count}")
-        print(f"  方差: {variance}")
-        if unique_count <= 1:
-            print(f"  *** 警告: 列 '{col}' 可能是常量或只有一个唯一值，这会导致回归失败! ***")
-    else:
-        print(f"  列 '{col}' 不在数据中。")
-print("--- 数据检查结束 ---\n")
-
-# 2. ***** 定义计算中介效应 (a*b) 的函数 *****
-# ***** 新版本：使用 statsmodels.api.OLS *****
 def calculate_indirect_effect(data):
-    """
-    在给定的数据样本上计算简单中介效应 (a*b)，使用 statsmodels.api.OLS。
-    模型: 健康 -> 体育活动 -> 客观环境
+  """
+  计算简单中介效应 (a*b)，使用 statsmodels.api.OLS。
+  模型: 健康 -> 体育活动 -> 客观环境
 
-    参数:
-      data: 一个 pandas DataFrame，包含 X, M, Y 变量的列。
+  参数:
+    data: 包含 X, M, Y 列的 pandas DataFrame。
 
-    返回:
-      计算出的中介效应值 (a*b)，如果模型拟合失败则返回 None。
-    """
+  返回:
+    中介效应值 (a*b)，若计算失败则返回 None。
+  """
+  try:
+    # --- 在这里定义 X, M, Y 的列名 (确保与你的数据文件一致) ---
+    x_col = '健康'
+    m_col = '体育活动'
+    y_col = '客观环境'
+    # ----------------------------------------------------------
+
+    # 确保列是数值类型，处理 Inf/-Inf 为 NaN
+    for col in [x_col, m_col, y_col]:
+        data[col] = pd.to_numeric(data[col], errors='coerce')
+    data = data.replace([np.inf, -np.inf], np.nan)
+
+    # --- 估计路径 a (X -> M) ---
+    data_a = data[[x_col, m_col]].dropna()
+    if data_a.shape[0] < 2: return None
+    X_a = sm.add_constant(data_a[x_col])
+    y_a = data_a[m_col]
+    if X_a.shape[1] > 1 and np.linalg.matrix_rank(X_a) < X_a.shape[1]: return None
+    model_a = sm.OLS(y_a, X_a).fit()
+    path_a = model_a.params[x_col]
+
+    # --- 估计路径 b (M -> Y | X) ---
+    data_b = data[[x_col, m_col, y_col]].dropna()
+    if data_b.shape[0] < 3: return None
+    X_b = sm.add_constant(data_b[[m_col, x_col]])
+    y_b = data_b[y_col]
+    if X_b.shape[1] > 1 and np.linalg.matrix_rank(X_b) < X_b.shape[1]: return None
+    model_b = sm.OLS(y_b, X_b).fit()
+    path_b = model_b.params[m_col]
+
+    # --- 计算中介效应 ---
+    indirect_effect = path_a * path_b
+    return indirect_effect
+
+  except Exception as e:
+    # print(f"计算中介效应时发生错误: {e}") # 出错时可取消注释查看
+    return None
+
+# ===== 主程序执行部分 =====
+if __name__ == "__main__":
+
+    # --- 1. 设置文件和模型参数 ---
+    # 【【【 在这里指定你的 Excel 文件名 】】】
+    data_filename = 'data.xlsx'
+    # -----------------------------
+
+    # 要计算的统计量函数 (这里是中介效应)
+    statistic_to_calculate = calculate_indirect_effect
+
+    # Bootstrap 参数
+    num_bootstrap_samples = 5000  # Bootstrap 重采样次数
+    confidence_level = 0.95    # 置信水平
+
+    # --- 2. 加载数据 ---
     try:
-        # 定义变量名 (确认与你的 Excel 文件列名完全一致)
-        x_col = '健康'
-        m_col = '体育活动'
-        y_col = '客观环境'
+        all_data = pd.read_excel(data_filename)
+        print(f"成功从 '{data_filename}' 加载数据。")
+        print("数据前5行预览：")
+        print(all_data.head())
 
-        # 确保列是数值类型，并处理可能的无穷大值
-        for col in [x_col, m_col, y_col]:
-            data[col] = pd.to_numeric(data[col], errors='coerce') # 转为数值，无法转换的变 NaN
-        data = data.replace([np.inf, -np.inf], np.nan) # 将 Inf/-Inf 替换为 NaN
+        # 检查必需列是否存在 (函数内部会再次检查并使用这些名字)
+        required_cols = ['健康', '体育活动', '客观环境']
+        if not all(col in all_data.columns for col in required_cols):
+            print(f"\n错误：数据文件 '{data_filename}' 中缺少必需的列。")
+            print(f"代码需要以下列名: {required_cols}")
+            exit() # 缺少列则退出程序
 
-        # --- 模型 1: 估计 X 对 M 的效应 (路径 a) ---
-        # 准备数据 (自动处理 NaN)
-        data_a = data[[x_col, m_col]].dropna() # 删除包含 NaN 的行
-        if data_a.shape[0] < 2: return None # 如果有效数据太少，无法拟合
-        X_a = sm.add_constant(data_a[x_col]) # 给自变量 X 添加常数项 (截距)
-        y_a = data_a[m_col]                  # 因变量 M
-
-        # 检查 X_a 的方差是否足够 (避免常量 predictor)
-        if X_a.shape[1] > 1 and np.linalg.matrix_rank(X_a) < X_a.shape[1]:
-             # print(f"警告: 模型a的 X ('{x_col}') 在此样本中可能存在共线性或近似常量。")
-             return None # 如果 X 本身或在添加常数后秩亏，则无法可靠拟合
-
-        model_a = sm.OLS(y_a, X_a).fit()
-        path_a = model_a.params[x_col] # 获取 X 的系数 a
-
-        # --- 模型 2: 估计 M 对 Y 的效应 (路径 b)，同时控制 X ---
-         # 准备数据 (自动处理 NaN)
-        data_b = data[[x_col, m_col, y_col]].dropna() # 删除包含 NaN 的行
-        if data_b.shape[0] < 3: return None # 如果有效数据太少（至少需要比变量数多1），无法拟合
-        X_b = sm.add_constant(data_b[[m_col, x_col]]) # 给自变量 M 和 X 添加常数项
-        y_b = data_b[y_col]                           # 因变量 Y
-
-        # 检查 X_b 的方差/秩是否足够
-        if X_b.shape[1] > 1 and np.linalg.matrix_rank(X_b) < X_b.shape[1]:
-             # print(f"警告: 模型b的预测变量 ('{m_col}', '{x_col}') 在此样本中可能存在共线性。")
-             return None # 如果 M, X 和常数项之间存在完全共线性，则无法拟合
-
-        model_b = sm.OLS(y_b, X_b).fit()
-        path_b = model_b.params[m_col] # 获取 M 的系数 b (控制X后)
-
-        # 计算并返回中介效应 (a * b)
-        indirect_effect = path_a * path_b
-        return indirect_effect
-
+    except FileNotFoundError:
+        print(f"\n错误：找不到数据文件 '{data_filename}'。请确保文件名正确且文件在脚本同目录下。")
+        exit() # 文件不存在则退出程序
     except Exception as e:
-        # 捕获其他可能的错误，例如数据全是NaN，或者statsmodels内部错误
-        # 【【【 暂时重新注释掉这行，除非再次出错 】】】
-        # print(f"计算中介效应时发生错误: {e}")
-        return None
-# ***** 函数结束 *****
+        print(f"\n读取数据文件时发生错误: {e}")
+        exit() # 其他读取错误则退出
 
-# 将上面定义的函数赋值给 statistic_to_calculate
-statistic_to_calculate = calculate_indirect_effect
-print(f"将要计算的统计量： 中介效应 (健康 -> 体育活动 -> 客观环境)")
+    # --- 3. 执行 Bootstrap 分析 ---
+    print(f"\n开始执行 Bootstrap 分析，计算统计量：{statistic_to_calculate.__name__}")
+    bootstrap_distribution = bootstrap_statistic(all_data, statistic_to_calculate, num_bootstrap_samples)
+    lower_ci, upper_ci = calculate_confidence_interval(bootstrap_distribution, confidence_level)
 
+    # --- 4. 打印最终结果 ---
+    print("\n--- Bootstrap 中介效应结果 ---")
+    original_indirect_effect = calculate_indirect_effect(all_data) # 在原始样本上计算一次
+    if original_indirect_effect is not None:
+        print(f"原始样本计算出的中介效应值 (a*b): {original_indirect_effect:.4f}")
+    else:
+        print("原始样本计算中介效应失败。")
 
-# 3. ***** 设置 Bootstrap 参数 *****
-num_bootstrap_samples = 5000  # 中介效应推荐 >= 5000 次
-confidence_level = 0.95    # 95% 置信水平
+    print(f"通过 Bootstrap 得到的有效中介效应值数量: {len(bootstrap_distribution)}")
+    print(f"{confidence_level*100:.0f}% 置信区间 (百分位法): ({lower_ci:.4f}, {upper_ci:.4f})")
 
-# 4. ***** 执行 Bootstrap 并计算置信区间 *****
-bootstrap_distribution = bootstrap_statistic(all_data, statistic_to_calculate, num_bootstrap_samples)
-lower_ci, upper_ci = calculate_confidence_interval(bootstrap_distribution, confidence_level)
+    # 解释结果
+    if len(bootstrap_distribution) > 0:
+        if lower_ci < 0 < upper_ci:
+            print("结论：中介效应的置信区间包含 0，表明中介效应在统计上不显著。")
+        elif not np.isnan(lower_ci):
+            print("结论：中介效应的置信区间不包含 0，表明中介效应在统计上显著。")
+    else:
+        print("结论：无法判断显著性，因为未能计算出有效的 Bootstrap 统计量。")
 
-# 5. ***** 打印结果 *****
-print("\n--- Bootstrap 中介效应结果 ---")
-# 计算原始样本的中介效应值
-original_indirect_effect = calculate_indirect_effect(all_data)
-if original_indirect_effect is not None:
-    print(f"原始样本计算出的中介效应值 (a*b): {original_indirect_effect:.4f}")
-else:
-    print("原始样本计算中介效应失败。")
-
-print(f"通过 Bootstrap 得到的有效中介效应值数量: {len(bootstrap_distribution)}")
-print(f"{confidence_level*100:.0f}% 置信区间 (百分位法): ({lower_ci:.4f}, {upper_ci:.4f})")
-
-# 检查置信区间是否包含 0
-if len(bootstrap_distribution) > 0:
-    if lower_ci < 0 < upper_ci:
-        print("中介效应的置信区间包含 0，表明中介效应在统计上不显著。")
-    elif not np.isnan(lower_ci):
-        print("中介效应的置信区间不包含 0，表明中介效应在统计上显著。")
-else:
-    print("无法判断显著性，因为没有有效的自助样本结果。")
+    print("\n分析完成。")
